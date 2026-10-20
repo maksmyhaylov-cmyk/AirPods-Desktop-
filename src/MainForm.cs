@@ -122,7 +122,7 @@ public sealed class MainForm : Form
 
         root.Controls.Add(Check("Завжди стерео (не перемикатися на Hands-Free)",
             _settings.ForceStereoOutput, v => { _settings.ForceStereoOutput = v; ApplyAudioPolicy(true); }));
-        root.Controls.Add(Check("Не використовувати мікрофон AirPods (звук не псується під час дзвінків)",
+        root.Controls.Add(Check("Не використовувати мікрофон AirPods",
             _settings.AvoidAirPodsMic, v => { _settings.AvoidAirPodsMic = v; ApplyAudioPolicy(true); }));
 
         var btnRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, MaximumSize = new Size(370, 0) };
@@ -130,8 +130,7 @@ public sealed class MainForm : Form
             "Hands-Free вимкнено. Тепер AirPods завжди грають у стерео-якості (мікрофон AirPods не працюватиме).")));
         btnRow.Controls.Add(Button("Увімкнути Hands-Free", () => RunBluetooth("hfp-on",
             "Hands-Free увімкнено. Мікрофон AirPods знову доступний.")));
-        btnRow.Controls.Add(Button("Перепідключити", () => RunBluetooth("reconnect",
-            "AirPods перепідключено.")));
+        btnRow.Controls.Add(Button("Підключити", ConnectAirPods));
         root.Controls.Add(btnRow);
 
         root.Controls.Add(Header("Автоматика"));
@@ -195,7 +194,7 @@ public sealed class MainForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Відкрити", null, (_, _) => ShowWindow());
-        menu.Items.Add("Перепідключити AirPods", null, (_, _) => RunBluetooth("reconnect", "AirPods перепідключено."));
+        menu.Items.Add("Підключити AirPods", null, (_, _) => ConnectAirPods());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Вихід", null, (_, _) => ExitApp());
 
@@ -344,6 +343,7 @@ public sealed class MainForm : Form
 
     private void OnTick()
     {
+        _scanner.EnsureRunning();
         _scanner.ExpireStale(TimeSpan.FromSeconds(30));
         if (_scanner.Current is { } s) HandleEarDetection(s);
         ApplyAudioPolicy(false);
@@ -375,29 +375,76 @@ public sealed class MainForm : Form
             }
             _stereoWasPresent = stereo != null;
 
-            if (_settings.AvoidAirPodsMic && pods.Count > 0)
+            var inputs = AudioDevices.GetActive(DataFlow.Capture);
+            var podMics = inputs.Where(i => i.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            string? noOtherMic = null;
+            if (_settings.AvoidAirPodsMic && podMics.Count > 0)
             {
-                var inputs = AudioDevices.GetActive(DataFlow.Capture);
+                // Windows 11 exposes AirPods as ONE output that silently drops to mono HFP whenever
+                // their mic is opened, so the only reliable fix is to keep the default mic elsewhere.
                 string? micMedia = AudioDevices.GetDefaultId(DataFlow.Capture, 1);
                 string? micComms = AudioDevices.GetDefaultId(DataFlow.Capture, 2);
-                bool podsMicDefault = inputs.Any(i => i.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
-                                                      && (i.Id == micMedia || i.Id == micComms));
-                var other = inputs.FirstOrDefault(i => !i.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
-                if (podsMicDefault && other != null)
-                    AudioDevices.SetDefault(other.Id);
+                bool podsMicDefault = podMics.Any(i => i.Id == micMedia || i.Id == micComms);
+                // Virtual devices (SplitCam, Voicemod...) would silently mute calls, so only real mics.
+                var other = inputs.Except(podMics).FirstOrDefault(i => !IsVirtualMic(i.Name));
+                if (podsMicDefault && other != null) AudioDevices.SetDefault(other.Id);
+                else if (podsMicDefault) noOtherMic = "Немає іншого мікрофона — щоб звук не псувався, вимкніть Hands-Free.";
             }
+
+            // Who is holding the AirPods mic right now (that is what switches them to mono).
+            var micUsers = podMics.SelectMany(m => AudioDevices.GetActiveSessionApps(m.Id)).Distinct().ToList();
 
             string? currentId = AudioDevices.GetDefaultId(DataFlow.Render, 1);
             var current = outputs.FirstOrDefault(o => o.Id == currentId);
-            _audioInfo.Text = pods.Count == 0
-                ? $"AirPods не підключені як аудіопристрій. Вихід зараз: {current?.Name ?? "—"}"
-                : $"Вихід зараз: {current?.Name ?? "—"}" + (current?.IsHandsFree == true
-                    ? "\n⚠ Режим Hands-Free — низька якість звуку!"
-                    : "");
+            string text = pods.Count == 0
+                ? $"AirPods не підключені до ПК. Вихід зараз: {current?.Name ?? "—"}"
+                : $"Вихід зараз: {current?.Name ?? "—"}";
+            if (current?.IsHandsFree == true || micUsers.Count > 0)
+                text += "\n⚠ Режим Hands-Free (моно)" +
+                        (micUsers.Count > 0 ? $": мікрофон AirPods використовує {string.Join(", ", micUsers)}" : "");
+            if (pods.Count > 0 && podMics.Count == 0) text += "\n✓ Hands-Free вимкнено — завжди стерео";
+            if (noOtherMic != null) text += "\n" + noOtherMic;
+            _audioInfo.Text = text;
         }
         catch (Exception ex)
         {
             _audioInfo.Text = "Не вдалося прочитати аудіопристрої: " + ex.Message;
+        }
+    }
+
+    private static bool IsVirtualMic(string name) =>
+        new[] { "Virtual", "Voicemod", "SplitCam", "VB-Audio", "CABLE", "Mixer", "Steam Streaming", "NVIDIA Broadcast" }
+            .Any(k => name.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Connects AirPods through the Bluetooth audio driver (like "Connect" in Windows settings).</summary>
+    private async void ConnectAirPods()
+    {
+        UseWaitCursor = true;
+        try
+        {
+            string filter = _settings.DeviceNameFilter;
+            int signalled = await Task.Run(() => AudioDevices.BluetoothConnect(filter, true));
+            if (signalled == 0)
+            {
+                // No stereo endpoint known yet (e.g. drivers were never installed): restart the profile.
+                await Task.Run(() => BluetoothClassic.RunElevated("reconnect", filter));
+            }
+            await Task.Delay(5000);
+            ApplyAudioPolicy(true);
+            bool connected = AudioDevices.GetActive(DataFlow.Render)
+                .Any(d => d.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
+            _tray.ShowBalloonTip(4000, "AirPodsWin", connected
+                ? "AirPods підключено."
+                : "Не вдалося підключити. Якщо Windows теж не може — видаліть AirPods у Параметрах Bluetooth і спаруйте знову.",
+                connected ? ToolTipIcon.Info : ToolTipIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "AirPodsWin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            UseWaitCursor = false;
         }
     }
 
@@ -424,8 +471,13 @@ public sealed class MainForm : Form
 
     // -------------------------------------------------------------- Icon
 
+    private (int? Level, bool Charging)? _trayIconState;
+
     private void SetTrayIcon(int? level, bool charging)
     {
+        // AirPods send several packets per second; redraw only when the picture changes.
+        if (_trayIconState == (level, charging)) return;
+        _trayIconState = (level, charging);
         var old = _trayIconHandle;
         var icon = MakeIcon(level, charging);
         _trayIconHandle = icon.Handle;

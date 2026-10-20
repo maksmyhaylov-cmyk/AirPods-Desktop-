@@ -7,13 +7,21 @@ public sealed class Settings
 {
     /// <summary>Part of the Bluetooth name used to find the AirPods audio devices.</summary>
     public string DeviceNameFilter { get; set; } = "AirPods";
-    public int MinRssi { get; set; } = -70;
+    /// <summary>
+    /// Weaker packets are ignored (dBm). Laptop/USB adapters often hear own AirPods at -95..-105,
+    /// so the default is permissive; the scanner prefers the strongest signal anyway.
+    /// </summary>
+    public int MinRssi { get; set; } = -110;
     public bool AutoPause { get; set; } = true;
     public bool AutoResume { get; set; } = true;
     /// <summary>Make the stereo "Headphones" endpoint default instead of the Hands-Free one.</summary>
     public bool ForceStereoOutput { get; set; } = true;
-    /// <summary>Keep the default microphone on another device so Windows never switches AirPods to HFP.</summary>
-    public bool AvoidAirPodsMic { get; set; } = false;
+    /// <summary>
+    /// Keep the default microphone on another device so Windows never switches AirPods to HFP.
+    /// On Windows 11 AirPods are a single output that drops to mono when their mic opens,
+    /// so this is the main fix and is on by default.
+    /// </summary>
+    public bool AvoidAirPodsMic { get; set; } = true;
     public bool LowBatteryNotify { get; set; } = true;
     public int LowBatteryLevel { get; set; } = 20;
 

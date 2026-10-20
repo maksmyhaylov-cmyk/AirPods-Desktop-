@@ -9,7 +9,9 @@ namespace AirPodsWin;
 /// </summary>
 public sealed class AirPodsScanner : IDisposable
 {
-    private readonly BluetoothLEAdvertisementWatcher _watcher;
+    private BluetoothLEAdvertisementWatcher? _watcher;
+    private DateTime _lastPacket = DateTime.Now;
+    private bool _wanted;
     private readonly object _lock = new();
     private AirPodsState? _current;
 
@@ -17,35 +19,41 @@ public sealed class AirPodsScanner : IDisposable
     public event Action<string>? Error;
 
     /// <summary>Packets weaker than this are ignored (dBm).</summary>
-    public int MinRssi { get; set; } = -70;
+    public int MinRssi { get; set; } = -110;
 
     public AirPodsState? Current
     {
         get { lock (_lock) return _current; }
     }
 
-    public AirPodsScanner()
+    private BluetoothLEAdvertisementWatcher CreateWatcher()
     {
-        _watcher = new BluetoothLEAdvertisementWatcher
+        var watcher = new BluetoothLEAdvertisementWatcher
         {
             ScanningMode = BluetoothLEScanningMode.Passive,
         };
-        var filter = new BluetoothLEManufacturerData { CompanyId = AirPodsState.AppleCompanyId };
-        _watcher.AdvertisementFilter.Advertisement.ManufacturerData.Add(filter);
-        _watcher.Received += OnReceived;
-        _watcher.Stopped += (_, e) =>
+        // No AdvertisementFilter: a manufacturer filter with only CompanyId and empty data
+        // matches nothing on real hardware. Apple packets are picked out in OnReceived.
+        watcher.Received += OnReceived;
+        watcher.Stopped += (_, e) =>
         {
             if (e.Error != Windows.Devices.Bluetooth.BluetoothError.Success)
-                Error?.Invoke($"Bluetooth: {e.Error}");
+                Error?.Invoke($"Bluetooth: {e.Error}. Пробую перезапустити сканер…");
         };
+        return watcher;
     }
 
     public void Start()
     {
+        _wanted = true;
         try
         {
+            _watcher ??= CreateWatcher();
             if (_watcher.Status != BluetoothLEAdvertisementWatcherStatus.Started)
+            {
+                _lastPacket = DateTime.Now;
                 _watcher.Start();
+            }
         }
         catch (Exception ex)
         {
@@ -55,8 +63,31 @@ public sealed class AirPodsScanner : IDisposable
 
     public void Stop()
     {
-        if (_watcher.Status == BluetoothLEAdvertisementWatcherStatus.Started)
+        _wanted = false;
+        if (_watcher?.Status == BluetoothLEAdvertisementWatcherStatus.Started)
             _watcher.Stop();
+    }
+
+    /// <summary>
+    /// Called by a timer. The watcher dies when the Bluetooth stack restarts (adapter plugged in,
+    /// radio toggled, sleep): it either reports Aborted/Stopped or silently stops delivering packets.
+    /// In both cases a fresh watcher is created.
+    /// </summary>
+    public void EnsureRunning()
+    {
+        if (!_wanted) return;
+        bool dead = _watcher == null
+            || _watcher.Status != BluetoothLEAdvertisementWatcherStatus.Started
+            || DateTime.Now - _lastPacket > TimeSpan.FromSeconds(60);
+        if (!dead) return;
+        if (_watcher != null)
+        {
+            _watcher.Received -= OnReceived;
+            try { if (_watcher.Status == BluetoothLEAdvertisementWatcherStatus.Started) _watcher.Stop(); }
+            catch { /* already dead */ }
+            _watcher = null;
+        }
+        Start();
     }
 
     /// <summary>Drops the state if nothing was heard for a while (called by a timer).</summary>
@@ -76,6 +107,7 @@ public sealed class AirPodsScanner : IDisposable
 
     private void OnReceived(BluetoothLEAdvertisementWatcher sender, BluetoothLEAdvertisementReceivedEventArgs args)
     {
+        _lastPacket = DateTime.Now;
         if (args.RawSignalStrengthInDBm < MinRssi) return;
 
         foreach (var md in args.Advertisement.ManufacturerData)
@@ -92,6 +124,9 @@ public sealed class AirPodsScanner : IDisposable
                     || _current.Model == state.Model
                     || state.Rssi > _current.Rssi + 10;
                 if (!accept) return;
+                // Case level is "unknown" while both pods are out of it: keep the last known value.
+                if (state.CaseBattery == null && _current?.Model == state.Model)
+                    state = state with { CaseBattery = _current.CaseBattery };
                 _current = state;
             }
             StateChanged?.Invoke(state);
@@ -102,6 +137,6 @@ public sealed class AirPodsScanner : IDisposable
     public void Dispose()
     {
         Stop();
-        _watcher.Received -= OnReceived;
+        if (_watcher != null) _watcher.Received -= OnReceived;
     }
 }
