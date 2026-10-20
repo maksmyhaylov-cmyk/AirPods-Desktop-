@@ -174,26 +174,41 @@ public sealed class PopupForm : Form
         bool isMax = st.Model.StartsWith("AirPods Max", StringComparison.Ordinal);
         if (isMax)
         {
-            DrawHeadphones(g, cx, imgY, s);
+            if (!TryDrawArt(g, Art.Headphones, cx, card.Y + 72 * s, 220 * s, s))
+                DrawHeadphones(g, cx, imgY, s);
             DrawBattery(g, cx, barY, st.LeftBattery, st.LeftCharging, null, s);
+        }
+        else if (Art.Get(Art.Hero) is { } hero)
+        {
+            // One picture of the case with both pods, three batteries under it.
+            Art.DrawFitted(g, hero, new RectangleF(card.X + 40 * s, card.Y + 70 * s, card.Width - 80 * s, 176 * s));
+            DrawBattery(g, card.X + card.Width * 0.2f, barY + 6 * s, st.LeftBattery, st.LeftCharging, "Л", s);
+            DrawBattery(g, card.X + card.Width * 0.5f, barY + 6 * s, st.RightBattery, st.RightCharging, "П", s);
+            DrawBattery(g, card.X + card.Width * 0.8f, barY + 6 * s, st.CaseBattery, st.CaseCharging, "Кейс", s);
         }
         else
         {
             float podsX = card.X + card.Width * 0.29f, caseX = card.X + card.Width * 0.71f;
             if (together)
             {
-                DrawPod(g, podsX - 31 * s, imgY, s, left: true);
-                DrawPod(g, podsX + 31 * s, imgY, s, left: false);
+                if (!TryDrawArt(g, Art.Pods, podsX, card.Y + 72 * s, 150 * s, s))
+                {
+                    DrawPod(g, podsX - 31 * s, imgY, s, left: true);
+                    DrawPod(g, podsX + 31 * s, imgY, s, left: false);
+                }
                 DrawBattery(g, podsX, barY, Math.Min(st.LeftBattery!.Value, st.RightBattery!.Value), st.LeftCharging, null, s);
             }
             else
             {
-                DrawPod(g, podsX - 33 * s, imgY, s, left: true);
-                DrawPod(g, podsX + 33 * s, imgY, s, left: false);
+                if (!TryDrawArt(g, Art.PodLeft, podsX - 36 * s, card.Y + 72 * s, 72 * s, s))
+                    DrawPod(g, podsX - 33 * s, imgY, s, left: true);
+                if (!TryDrawArt(g, Art.PodRight, podsX + 36 * s, card.Y + 72 * s, 72 * s, s))
+                    DrawPod(g, podsX + 33 * s, imgY, s, left: false);
                 DrawBattery(g, podsX - 36 * s, barY, st.LeftBattery, st.LeftCharging, "Л", s);
                 DrawBattery(g, podsX + 36 * s, barY, st.RightBattery, st.RightCharging, "П", s);
             }
-            DrawCase(g, caseX, imgY, s, st.CaseCharging);
+            if (!TryDrawArt(g, Art.Case, caseX, card.Y + 72 * s, 150 * s, s))
+                DrawCase(g, caseX, imgY, s, st.CaseCharging);
             DrawBattery(g, caseX, barY, st.CaseBattery, st.CaseCharging, null, s);
         }
 
@@ -212,6 +227,14 @@ public sealed class PopupForm : Form
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
             g.DrawString(busy ? "Підключення…" : "Підключити", font, white, _buttonRect, sf);
         }
+    }
+
+    /// <summary>Draws artwork from src/Assets into the product area; false if the file is absent.</summary>
+    private static bool TryDrawArt(Graphics g, string name, float cx, float top, float width, float s)
+    {
+        if (Art.Get(name) is not { } image) return false;
+        Art.DrawFitted(g, image, new RectangleF(cx - width / 2, top, width, 165 * s));
+        return true;
     }
 
     /// <summary>iOS battery glyph with the percentage under it.</summary>

@@ -23,4 +23,9 @@
     <DebugType>none</DebugType>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Optional artwork, see Art.cs. Resource names: AirPodsWin.Assets.<file>.png -->
+    <EmbeddedResource Include="Assets\*.png" LogicalName="AirPodsWin.Assets.%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

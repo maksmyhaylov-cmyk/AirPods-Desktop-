@@ -90,6 +90,19 @@ public sealed class BatteryView : Control
     /// <summary>Monochrome glyphs fitted into <paramref name="box"/> (the inside of the ring).</summary>
     private void DrawGlyph(Graphics g, RectangleF box, Color color)
     {
+        string asset = Glyph switch
+        {
+            BatteryGlyph.LeftPod => Art.GlyphLeft,
+            BatteryGlyph.RightPod => Art.GlyphRight,
+            BatteryGlyph.Case => Art.GlyphCase,
+            _ => Art.GlyphHeadphones,
+        };
+        if (Art.Get(asset) is { } image)
+        {
+            Art.DrawFitted(g, image, box, _level is null ? 0.35f : 1f);
+            return;
+        }
+
         float u = box.Width / 32f; // glyphs are designed on a 32x32 grid
         var state = g.Save();
         g.TranslateTransform(box.X, box.Y);
