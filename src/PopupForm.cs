@@ -99,7 +99,7 @@ public sealed class PopupForm : Form
         Render();
     }
 
-    private float CardH => _connection == ConnectionState.Connected ? 318 : 384;
+    private float CardH => _connection == ConnectionState.Connected ? 334 : 400;
 
     // ---------------------------------------------------------- Drawing
 
@@ -121,7 +121,7 @@ public sealed class PopupForm : Form
         using (var g = Graphics.FromImage(bmp))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             DrawCard(g, new RectangleF(sh, sh, CardW * s, CardH * s), s);
         }
@@ -182,8 +182,8 @@ public sealed class PopupForm : Form
         {
             // One picture of the case with both pods, three batteries under it.
             Art.DrawFitted(g, hero, new RectangleF(card.X + 40 * s, card.Y + 70 * s, card.Width - 80 * s, 176 * s));
-            DrawBattery(g, card.X + card.Width * 0.2f, barY + 6 * s, st.LeftBattery, st.LeftCharging, "Л", s);
-            DrawBattery(g, card.X + card.Width * 0.5f, barY + 6 * s, st.RightBattery, st.RightCharging, "П", s);
+            DrawBattery(g, card.X + card.Width * 0.2f, barY + 6 * s, st.LeftBattery, st.LeftCharging, "Ліва", s);
+            DrawBattery(g, card.X + card.Width * 0.5f, barY + 6 * s, st.RightBattery, st.RightCharging, "Права", s);
             DrawBattery(g, card.X + card.Width * 0.8f, barY + 6 * s, st.CaseBattery, st.CaseCharging, "Кейс", s);
         }
         else
@@ -204,8 +204,8 @@ public sealed class PopupForm : Form
                     DrawPod(g, podsX - 33 * s, imgY, s, left: true);
                 if (!TryDrawArt(g, Art.PodRight, podsX + 36 * s, card.Y + 72 * s, 72 * s, s))
                     DrawPod(g, podsX + 33 * s, imgY, s, left: false);
-                DrawBattery(g, podsX - 36 * s, barY, st.LeftBattery, st.LeftCharging, "Л", s);
-                DrawBattery(g, podsX + 36 * s, barY, st.RightBattery, st.RightCharging, "П", s);
+                DrawBattery(g, podsX - 36 * s, barY, st.LeftBattery, st.LeftCharging, "Ліва", s);
+                DrawBattery(g, podsX + 36 * s, barY, st.RightBattery, st.RightCharging, "Права", s);
             }
             if (!TryDrawArt(g, Art.Case, caseX, card.Y + 72 * s, 150 * s, s))
                 DrawCase(g, caseX, imgY, s, st.CaseCharging);
@@ -267,11 +267,15 @@ public sealed class PopupForm : Form
             using var black = new SolidBrush(Color.FromArgb(40, 40, 40));
             g.FillPolygon(black, bolt);
         }
-        using var font = Theme.Font(15, s);
-        using var brush = new SolidBrush(level is null ? Theme.SubText : Color.FromArgb(60, 60, 67));
+        // iOS: the percentage in the semibold display face, an optional small caption under it.
         var sf = new StringFormat { Alignment = StringAlignment.Center };
-        string text = (label != null ? label + " " : "") + (level is int v ? $"{v}%" : "—");
-        g.DrawString(text, font, brush, new RectangleF(cx - 50 * s, y + h + 5 * s, 100 * s, 22 * s), sf);
+        using (var font = Theme.SemiboldFont(16, s, display: true))
+        using (var brush = new SolidBrush(level is null ? Theme.SubText : Color.FromArgb(60, 60, 67)))
+            g.DrawString(level is int v ? $"{v}%" : "—", font, brush, new RectangleF(cx - 50 * s, y + h + 6 * s, 100 * s, 22 * s), sf);
+        if (label == null) return;
+        using var capFont = Theme.Font(12.5f, s);
+        using var capBrush = new SolidBrush(Theme.SubText);
+        g.DrawString(label, capFont, capBrush, new RectangleF(cx - 50 * s, y + h + 26 * s, 100 * s, 18 * s), sf);
     }
 
     /// <summary>
