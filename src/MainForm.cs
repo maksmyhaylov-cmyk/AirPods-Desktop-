@@ -44,6 +44,15 @@ public sealed class MainForm : Form
     private const int EarDebounceMs = 500;
     private readonly System.Windows.Forms.Timer _earTimer = new() { Interval = EarDebounceMs };
 
+    // Case-open card and auto-connect
+    private readonly PopupForm _popup = new();
+    private readonly System.Windows.Forms.Timer _popupTimer = new() { Interval = 1000 };
+    private DateTime _lastCaseOpen = DateTime.MinValue;
+    private bool _popupDismissed;
+    private bool _connecting;
+    private bool _podsConnected;
+    private string? _deviceName;
+
     // Audio
     private bool _stereoWasPresent;
     private bool _lowBatteryNotified;
@@ -72,6 +81,9 @@ public sealed class MainForm : Form
 
         _timer.Tick += (_, _) => OnTick();
         _earTimer.Tick += (_, _) => ConfirmPendingInEar();
+        _popupTimer.Tick += (_, _) => CheckCaseClosed();
+        _popup.ConnectRequested += () => ConnectAirPods(interactive: false);
+        _popup.Dismissed += () => _popupDismissed = true;
     }
 
     protected override CreateParams CreateParams
@@ -229,8 +241,12 @@ public sealed class MainForm : Form
             "Hands-Free вимкнено. Тепер AirPods завжди грають у стерео-якості (мікрофон AirPods не працюватиме)."));
         _soundCard.AddAction("Увімкнути Hands-Free", () => RunBluetooth("hfp-on",
             "Hands-Free увімкнено. Мікрофон AirPods знову доступний."));
-        _soundCard.AddAction("Підключити AirPods", ConnectAirPods);
+        _soundCard.AddAction("Підключити AirPods", () => ConnectAirPods());
 
+        _autoCard.AddToggle("Автопідключення", "Коли відкриваю кейс поруч із ПК",
+            _settings.AutoConnect, v => { _settings.AutoConnect = v; SaveAnd(null); });
+        _autoCard.AddToggle("Картка як на iPhone", "Заряд при відкритті кейса",
+            _settings.ShowCasePopup, v => { _settings.ShowCasePopup = v; SaveAnd(null); });
         _autoCard.AddToggle("Автопауза", "Коли виймаю навушник з вуха",
             _settings.AutoPause, v => { _settings.AutoPause = v; SaveAnd(null); });
         _autoCard.AddToggle("Автопродовження", "Коли вставляю навушник назад",
@@ -293,6 +309,7 @@ public sealed class MainForm : Form
         _exiting = true;
         _settingsForm.AllowClose = true;
         _settingsForm.Close();
+        _popup.Close();
         Close();
     }
 
@@ -356,6 +373,69 @@ public sealed class MainForm : Form
 
         HandleEarDetection(s);
         HandleLowBattery(s);
+        HandleCaseOpen(s);
+    }
+
+    // ------------------------------------------------- Case-open card
+
+    private PopupForm.ConnectionState Connection =>
+        _podsConnected ? PopupForm.ConnectionState.Connected
+        : _connecting ? PopupForm.ConnectionState.Connecting
+        : PopupForm.ConnectionState.NotConnected;
+
+    /// <summary>
+    /// Like iOS/macOS: opening the case near the PC shows the card and (optionally) connects.
+    /// Only a nearby case counts, so someone else's AirPods across the room don't trigger it.
+    /// </summary>
+    private void HandleCaseOpen(AirPodsState s)
+    {
+        bool open = s.InCase && s.LidOpen && s.Rssi >= -85;
+        if (!open)
+        {
+            _popup.UpdateCard(s, Connection);
+            return;
+        }
+
+        bool newOpening = DateTime.Now - _lastCaseOpen > TimeSpan.FromSeconds(10);
+        _lastCaseOpen = DateTime.Now;
+        if (newOpening)
+        {
+            _popupDismissed = false;
+            if (_settings.AutoConnect && !_podsConnected && !_connecting) ConnectAirPods(interactive: false);
+        }
+
+        if (_settings.ShowCasePopup && !_popupDismissed)
+        {
+            if (_popup.IsShown) _popup.UpdateCard(s, Connection);
+            else _popup.ShowCard(s, DeviceName(s), Connection);
+            _popupTimer.Start();
+        }
+    }
+
+    /// <summary>Hides the card a few seconds after the lid closes (AirPods then stop advertising).</summary>
+    private void CheckCaseClosed()
+    {
+        if (DateTime.Now - _lastCaseOpen < TimeSpan.FromSeconds(4)) return;
+        _popupTimer.Stop();
+        _popup.HideCard();
+    }
+
+    /// <summary>The Bluetooth name the user gave the AirPods, like the iPhone card shows.</summary>
+    private string DeviceName(AirPodsState s)
+    {
+        if (_deviceName == null)
+        {
+            string? paired = SafeGet(() => BluetoothClassic.FindPaired(_settings.DeviceNameFilter).FirstOrDefault());
+            _deviceName = paired?.Replace(" - Find My", "", StringComparison.OrdinalIgnoreCase).Trim() ?? "";
+        }
+        return _deviceName.Length > 0 ? _deviceName : s.Model;
+    }
+
+    /// <summary>"--demo-popup": shows the card with sample data (for screenshots and design work).</summary>
+    public void ShowDemoPopup()
+    {
+        var demo = new AirPodsState("AirPods Pro 2", 75, 75, 49, true, true, false, false, false, true, true, -50, DateTime.Now);
+        _popup.ShowCard(demo, DeviceName(demo), _podsConnected ? PopupForm.ConnectionState.Connected : PopupForm.ConnectionState.NotConnected);
     }
 
     /// <summary>One line under the title: a warning in orange if something hurts the sound, else the ear state.</summary>
@@ -484,6 +564,8 @@ public sealed class MainForm : Form
                     AudioDevices.SetDefault(stereo.Id);
             }
             _stereoWasPresent = stereo != null;
+            _podsConnected = pods.Count > 0;
+            if (_lastState != null) _popup.UpdateCard(_lastState, Connection);
 
             var inputs = AudioDevices.GetActive(DataFlow.Capture);
             var podMics = inputs.Where(i => i.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -531,34 +613,48 @@ public sealed class MainForm : Form
             .Any(k => name.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Connects AirPods through the Bluetooth audio driver (like "Connect" in Windows settings).</summary>
-    private async void ConnectAirPods()
+    /// <param name="interactive">
+    /// From a menu/button: may fall back to the elevated helper (UAC) and reports the result.
+    /// From the case-open card or auto-connect: silent, no UAC; the card shows the progress.
+    /// </param>
+    private async void ConnectAirPods(bool interactive = true)
     {
-        UseWaitCursor = true;
+        if (_connecting) return;
+        _connecting = true;
+        if (_lastState != null) _popup.UpdateCard(_lastState, Connection);
         try
         {
             string filter = _settings.DeviceNameFilter;
             int signalled = await Task.Run(() => AudioDevices.BluetoothConnect(filter, true));
-            if (signalled == 0)
+            if (signalled == 0 && interactive)
             {
                 // No stereo endpoint known yet (e.g. drivers were never installed): restart the profile.
                 await Task.Run(() => BluetoothClassic.RunElevated("reconnect", filter));
             }
-            await Task.Delay(5000);
+            // The A2DP endpoint appears a few seconds after the link comes up.
+            bool connected = false;
+            for (int i = 0; i < 16 && !connected; i++)
+            {
+                await Task.Delay(500);
+                connected = AudioDevices.GetActive(DataFlow.Render)
+                    .Any(d => d.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
+            }
+            _connecting = false;
             ApplyAudioPolicy(true);
-            bool connected = AudioDevices.GetActive(DataFlow.Render)
-                .Any(d => d.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
-            _tray.ShowBalloonTip(4000, "AirPodsWin", connected
-                ? "AirPods підключено."
-                : "Не вдалося підключити. Якщо Windows теж не може — видаліть AirPods у Параметрах Bluetooth і спаруйте знову.",
-                connected ? ToolTipIcon.Info : ToolTipIcon.Warning);
+            if (interactive)
+                _tray.ShowBalloonTip(4000, "AirPodsWin", connected
+                    ? "AirPods підключено."
+                    : "Не вдалося підключити. Якщо Windows теж не може — видаліть AirPods у Параметрах Bluetooth і спаруйте знову.",
+                    connected ? ToolTipIcon.Info : ToolTipIcon.Warning);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "AirPodsWin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (interactive) MessageBox.Show(this, ex.Message, "AirPodsWin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
-            UseWaitCursor = false;
+            _connecting = false;
+            if (_lastState != null) _popup.UpdateCard(_lastState, Connection);
         }
     }
 

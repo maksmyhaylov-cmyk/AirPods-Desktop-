@@ -1,4 +1,4 @@
-namespace AirPodsWin;
+﻿namespace AirPodsWin;
 
 internal static class Program
 {
@@ -34,7 +34,9 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         bool startHidden = args.Contains("--tray");
-        Application.Run(new MainForm(startHidden));
+        var form = new MainForm(startHidden);
+        if (args.Contains("--demo-popup")) form.Shown += (_, _) => form.ShowDemoPopup();
+        Application.Run(form);
         return 0;
     }
 }

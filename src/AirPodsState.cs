@@ -16,6 +16,7 @@ public sealed record AirPodsState(
     bool LeftInEar,
     bool RightInEar,
     bool LidOpen,
+    bool InCase,
     short Rssi,
     DateTime Received)
 {
@@ -80,6 +81,9 @@ public sealed record AirPodsState(
         bool otherInEar = (status & 0b0000_1000) != 0;
 
         bool lidOpen = (data[8] & 0b0000_1000) == 0;
+        // Bit 4: the broadcasting pod sits in the case (seen as 0x35/0x55 in the case, 0x03/0x2B out of it).
+        // The lid bit only means something while this is set.
+        bool inCase = (status & 0b0001_0000) != 0;
 
         int? Level(int raw) => raw <= 10 ? raw * 10 : null; // 15 = unknown
 
@@ -96,6 +100,7 @@ public sealed record AirPodsState(
             LeftInEar: leftBroadcasting ? currentInEar : otherInEar,
             RightInEar: leftBroadcasting ? otherInEar : currentInEar,
             LidOpen: lidOpen,
+            InCase: inCase,
             Rssi: rssi,
             Received: DateTime.Now);
     }

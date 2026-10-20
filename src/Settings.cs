@@ -24,6 +24,10 @@ public sealed class Settings
     public bool AvoidAirPodsMic { get; set; } = true;
     public bool LowBatteryNotify { get; set; } = true;
     public int LowBatteryLevel { get; set; } = 20;
+    /// <summary>iPhone-style card when the case is opened near the PC.</summary>
+    public bool ShowCasePopup { get; set; } = true;
+    /// <summary>Connect AirPods to the PC when the case is opened nearby (like a Mac).</summary>
+    public bool AutoConnect { get; set; } = true;
     /// <summary>Last widget position (screen coordinates); null = above the tray.</summary>
     public int? WidgetLeft { get; set; }
     public int? WidgetTop { get; set; }
