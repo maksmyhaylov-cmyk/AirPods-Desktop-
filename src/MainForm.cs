@@ -252,7 +252,9 @@ public sealed class MainForm : Form
         }
 
         _title.Text = s.Model;
-        _status.Text = DescribeEars(s) + $"   ·   сигнал {s.Rssi} dBm";
+        _status.Text = DescribeEars(s) + $"   ·   сигнал {s.Rssi} dBm" + (s.Rssi < -90 && s.AnyInEar
+            ? "\n⚠ Дуже слабкий Bluetooth-сигнал: звук може заїкатися. Перевірте антену або використайте USB-адаптер."
+            : "");
         _left.SetState(s.LeftBattery, s.LeftCharging, s.LeftInEar);
         _right.SetState(s.RightBattery, s.RightCharging, s.RightInEar);
         _case.SetState(s.CaseBattery, s.CaseCharging, s.LidOpen);
