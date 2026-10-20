@@ -182,8 +182,8 @@ public sealed class PopupForm : Form
         {
             // One picture of the case with both pods, three batteries under it.
             Art.DrawFitted(g, hero, new RectangleF(card.X + 40 * s, card.Y + 70 * s, card.Width - 80 * s, 176 * s));
-            DrawBattery(g, card.X + card.Width * 0.2f, barY + 6 * s, st.LeftBattery, st.LeftCharging, "Ліва", s);
-            DrawBattery(g, card.X + card.Width * 0.5f, barY + 6 * s, st.RightBattery, st.RightCharging, "Права", s);
+            DrawBattery(g, card.X + card.Width * 0.2f, barY + 6 * s, st.LeftBattery, st.LeftCharging, "Лівий", s);
+            DrawBattery(g, card.X + card.Width * 0.5f, barY + 6 * s, st.RightBattery, st.RightCharging, "Правий", s);
             DrawBattery(g, card.X + card.Width * 0.8f, barY + 6 * s, st.CaseBattery, st.CaseCharging, "Кейс", s);
         }
         else
@@ -204,8 +204,8 @@ public sealed class PopupForm : Form
                     DrawPod(g, podsX - 33 * s, imgY, s, left: true);
                 if (!TryDrawArt(g, Art.PodRight, podsX + 36 * s, card.Y + 72 * s, 72 * s, s))
                     DrawPod(g, podsX + 33 * s, imgY, s, left: false);
-                DrawBattery(g, podsX - 36 * s, barY, st.LeftBattery, st.LeftCharging, "Ліва", s);
-                DrawBattery(g, podsX + 36 * s, barY, st.RightBattery, st.RightCharging, "Права", s);
+                DrawBattery(g, podsX - 36 * s, barY, st.LeftBattery, st.LeftCharging, "Лівий", s);
+                DrawBattery(g, podsX + 36 * s, barY, st.RightBattery, st.RightCharging, "Правий", s);
             }
             if (!TryDrawArt(g, Art.Case, caseX, card.Y + 72 * s, 150 * s, s))
                 DrawCase(g, caseX, imgY, s, st.CaseCharging);

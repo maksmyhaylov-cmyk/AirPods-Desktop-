@@ -19,8 +19,8 @@ public sealed class MainForm : Form
     private readonly Label _status = new() { AutoEllipsis = true };
     private readonly IconButton _gear = new() { Glyph = "" };
     private readonly IconButton _close = new() { Glyph = "" };
-    private readonly BatteryView _left = new() { Caption = "Ліва", Glyph = BatteryGlyph.LeftPod };
-    private readonly BatteryView _right = new() { Caption = "Права", Glyph = BatteryGlyph.RightPod };
+    private readonly BatteryView _left = new() { Caption = "Лівий", Glyph = BatteryGlyph.LeftPod };
+    private readonly BatteryView _right = new() { Caption = "Правий", Glyph = BatteryGlyph.RightPod };
     private readonly BatteryView _case = new() { Caption = "Кейс", Glyph = BatteryGlyph.Case };
 
     // Settings window
@@ -362,7 +362,7 @@ public sealed class MainForm : Form
         if (_case.Visible == isMax)
         {
             _case.Visible = _right.Visible = !isMax;
-            _left.Caption = isMax ? "Заряд" : "Ліва";
+            _left.Caption = isMax ? "Заряд" : "Лівий";
             _left.Glyph = isMax ? BatteryGlyph.Headphones : BatteryGlyph.LeftPod;
             Relayout();
         }
