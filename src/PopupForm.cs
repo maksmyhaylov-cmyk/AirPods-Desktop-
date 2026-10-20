@@ -1,4 +1,4 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
@@ -168,7 +168,7 @@ public sealed class PopupForm : Form
         }
 
         // Products: one battery for the pair when both pods agree (like iOS), separate L/R otherwise.
-        float imgY = card.Y + 160 * s, barY = card.Y + 252 * s;
+        float imgY = card.Y + 150 * s, barY = card.Y + 252 * s;
         bool together = st.LeftBattery is int l && st.RightBattery is int r2 && Math.Abs(l - r2) <= 10
                         && st.LeftCharging == st.RightCharging;
         bool isMax = st.Model.StartsWith("AirPods Max", StringComparison.Ordinal);
@@ -179,17 +179,17 @@ public sealed class PopupForm : Form
         }
         else
         {
-            float podsX = card.X + card.Width * 0.30f, caseX = card.X + card.Width * 0.71f;
+            float podsX = card.X + card.Width * 0.29f, caseX = card.X + card.Width * 0.71f;
             if (together)
             {
-                DrawPod(g, podsX - 21 * s, imgY, s, left: true);
-                DrawPod(g, podsX + 21 * s, imgY, s, left: false);
+                DrawPod(g, podsX - 31 * s, imgY, s, left: true);
+                DrawPod(g, podsX + 31 * s, imgY, s, left: false);
                 DrawBattery(g, podsX, barY, Math.Min(st.LeftBattery!.Value, st.RightBattery!.Value), st.LeftCharging, null, s);
             }
             else
             {
-                DrawPod(g, podsX - 32 * s, imgY, s, left: true);
-                DrawPod(g, podsX + 32 * s, imgY, s, left: false);
+                DrawPod(g, podsX - 33 * s, imgY, s, left: true);
+                DrawPod(g, podsX + 33 * s, imgY, s, left: false);
                 DrawBattery(g, podsX - 36 * s, barY, st.LeftBattery, st.LeftCharging, "Л", s);
                 DrawBattery(g, podsX + 36 * s, barY, st.RightBattery, st.RightCharging, "П", s);
             }
@@ -251,75 +251,150 @@ public sealed class PopupForm : Form
         g.DrawString(text, font, brush, new RectangleF(cx - 50 * s, y + h + 5 * s, 100 * s, 22 * s), sf);
     }
 
-    /// <summary>Stylised AirPods Pro bud: glossy head with a silicone tip and a stem.</summary>
+    /// <summary>
+    /// AirPods Pro bud seen from the front (our own vector drawing): glossy head with the black
+    /// sensor grille, a silicone ear tip facing inwards, a stem with the L/R mark and a silver mic cap.
+    /// </summary>
     private static void DrawPod(Graphics g, float cx, float cy, float s, bool left)
     {
+        // contact shadow
+        using (var shadow = new SolidBrush(Color.FromArgb(22, 0, 0, 0)))
+            g.FillEllipse(shadow, cx - 16 * s, cy + 50 * s, 30 * s, 6 * s);
+
         var state = g.Save();
         g.TranslateTransform(cx, cy);
+        g.ScaleTransform(s, s);
         if (!left) g.ScaleTransform(-1, 1);
-        g.RotateTransform(8);
 
-        var stem = new RectangleF(-1 * s, -6 * s, 12 * s, 54 * s);
-        var head = new RectangleF(-20 * s, -36 * s, 34 * s, 33 * s);
-        var tip = new RectangleF(-27 * s, -30 * s, 17 * s, 24 * s);
-
-        // contact shadow
-        using (var shadow = new SolidBrush(Color.FromArgb(25, 0, 0, 0)))
-            g.FillEllipse(shadow, -10 * s, 46 * s, 26 * s, 6 * s);
-
-        using (var stemPath = Theme.RoundedRect(stem, 6 * s))
-        using (var stemBrush = new LinearGradientBrush(stem, Color.White, Color.FromArgb(214, 214, 220), LinearGradientMode.Horizontal))
-        using (var edge = new Pen(Color.FromArgb(205, 205, 212), 1f * s))
+        // stem
+        var stem = new RectangleF(-10, -10, 14, 60);
+        using (var stemPath = Theme.RoundedRect(stem, 7))
         {
-            g.FillPath(stemBrush, stemPath);
+            using (var b = new LinearGradientBrush(stem, Color.Empty, Color.Empty, LinearGradientMode.Horizontal))
+            {
+                b.InterpolationColors = new ColorBlend
+                {
+                    Colors = new[] { Color.FromArgb(214, 214, 220), Color.White, Color.FromArgb(236, 236, 240), Color.FromArgb(200, 200, 207) },
+                    Positions = new[] { 0f, 0.35f, 0.7f, 1f },
+                };
+                g.FillPath(b, stemPath);
+            }
+            // silver microphone cap at the bottom of the stem
+            var clip = g.Clip;
+            g.SetClip(stemPath, CombineMode.Intersect);
+            var cap = new RectangleF(stem.X, stem.Bottom - 6, stem.Width, 6);
+            using (var silver = new LinearGradientBrush(cap, Color.FromArgb(150, 150, 156), Color.FromArgb(225, 225, 230), LinearGradientMode.Horizontal))
+                g.FillRectangle(silver, cap);
+            g.Clip = clip;
+            using var edge = new Pen(Color.FromArgb(205, 205, 212), 0.8f);
             g.DrawPath(edge, stemPath);
         }
+
+        // head
+        var head = new RectangleF(-27, -55, 50, 48);
         using (var headPath = new GraphicsPath())
         {
             headPath.AddEllipse(head);
-            using var headBrush = new PathGradientBrush(headPath)
+            using var b = new PathGradientBrush(headPath)
             {
                 CenterColor = Color.White,
-                CenterPoint = new PointF(head.X + head.Width * 0.62f, head.Y + head.Height * 0.35f),
-                SurroundColors = new[] { Color.FromArgb(206, 206, 213) },
+                CenterPoint = new PointF(head.X + head.Width * 0.38f, head.Y + head.Height * 0.32f),
+                SurroundColors = new[] { Color.FromArgb(212, 212, 219) },
+                FocusScales = new PointF(0.45f, 0.45f),
             };
-            g.FillPath(headBrush, headPath);
-            using var edge = new Pen(Color.FromArgb(200, 200, 207), 1f * s);
+            g.FillPath(b, headPath);
+            using var edge = new Pen(Color.FromArgb(206, 206, 213), 0.8f);
             g.DrawPath(edge, headPath);
         }
-        // silicone tip and its dark mesh
-        using (var tipBrush = new LinearGradientBrush(tip, Color.FromArgb(236, 236, 240), Color.FromArgb(196, 196, 202), LinearGradientMode.Horizontal))
-            g.FillEllipse(tipBrush, tip);
-        using (var mesh = new SolidBrush(Color.FromArgb(120, 120, 126)))
-            g.FillEllipse(mesh, tip.X + 3 * s, tip.Y + 6 * s, 7 * s, 12 * s);
-        // sensor dot
-        using (var dot = new SolidBrush(Color.FromArgb(60, 60, 66)))
-            g.FillEllipse(dot, 2 * s, -22 * s, 4 * s, 4 * s);
+
+        // black sensor grille
+        var grille = g.Save();
+        g.TranslateTransform(-11, -43);
+        g.RotateTransform(-38);
+        using (var path = Theme.RoundedRect(new RectangleF(-9, -3.6f, 18, 7.2f), 3.6f))
+        using (var black = new SolidBrush(Color.FromArgb(28, 28, 30)))
+            g.FillPath(black, path);
+        g.Restore(grille);
+
+        // silicone ear tip facing inwards
+        var tip = new RectangleF(1, -37, 30, 30);
+        using (var tipPath = new GraphicsPath())
+        {
+            tipPath.AddEllipse(tip);
+            using var b = new PathGradientBrush(tipPath)
+            {
+                CenterColor = Color.FromArgb(250, 250, 252),
+                CenterPoint = new PointF(tip.X + tip.Width * 0.4f, tip.Y + tip.Height * 0.35f),
+                SurroundColors = new[] { Color.FromArgb(214, 214, 220) },
+            };
+            g.FillPath(b, tipPath);
+            using var edge = new Pen(Color.FromArgb(200, 200, 207), 0.8f);
+            g.DrawPath(edge, tipPath);
+        }
+        var hole = new RectangleF(13, -26, 11, 10);
+        using (var b = new LinearGradientBrush(hole, Color.FromArgb(105, 105, 112), Color.FromArgb(160, 160, 166), 60f))
+            g.FillEllipse(b, hole);
         g.Restore(state);
+
+        // L / R mark on the stem (drawn unmirrored)
+        using var font = Theme.Font(10, s);
+        using var mark = new SolidBrush(Color.FromArgb(196, 196, 202));
+        var sf = new StringFormat { Alignment = StringAlignment.Center };
+        float markX = left ? cx - 3 * s : cx + 3 * s;
+        g.DrawString(left ? "L" : "R", font, mark, new RectangleF(markX - 8 * s, cy + 22 * s, 16 * s, 14 * s), sf);
     }
 
-    /// <summary>Stylised charging case, slightly open-looking like the iOS pop-up.</summary>
+    /// <summary>Charging case seen from the front (our own vector drawing), with the lid seam and status light.</summary>
     private static void DrawCase(Graphics g, float cx, float cy, float s, bool charging)
     {
-        var body = new RectangleF(cx - 64 * s, cy - 48 * s, 128 * s, 98 * s);
-        using (var shadow = new SolidBrush(Color.FromArgb(28, 0, 0, 0)))
-            g.FillEllipse(shadow, body.X + 10 * s, body.Bottom - 4 * s, body.Width - 20 * s, 10 * s);
-        using (var path = Theme.RoundedRect(body, 30 * s))
+        var body = new RectangleF(cx - 64 * s, cy - 44 * s, 128 * s, 100 * s);
+        using (var shadow = new SolidBrush(Color.FromArgb(24, 0, 0, 0)))
+            g.FillEllipse(shadow, body.X + 8 * s, body.Bottom - 3 * s, body.Width - 16 * s, 10 * s);
+
+        // softer top corners, rounder bottom corners like the real case
+        float rt = 22 * s, rb = 38 * s;
+        using var path = new GraphicsPath();
+        path.AddArc(body.X, body.Y, rt * 2, rt * 2, 180, 90);
+        path.AddArc(body.Right - rt * 2, body.Y, rt * 2, rt * 2, 270, 90);
+        path.AddArc(body.Right - rb * 2, body.Bottom - rb * 2, rb * 2, rb * 2, 0, 90);
+        path.AddArc(body.X, body.Bottom - rb * 2, rb * 2, rb * 2, 90, 90);
+        path.CloseFigure();
+
+        using (var b = new LinearGradientBrush(body, Color.Empty, Color.Empty, LinearGradientMode.Vertical))
         {
-            using var brush = new LinearGradientBrush(body, Color.White, Color.FromArgb(222, 222, 228), 70f);
-            g.FillPath(brush, path);
-            using var edge = new Pen(Color.FromArgb(208, 208, 214), 1.2f * s);
-            g.DrawPath(edge, path);
+            b.InterpolationColors = new ColorBlend
+            {
+                Colors = new[] { Color.FromArgb(244, 244, 247), Color.White, Color.FromArgb(246, 246, 249), Color.FromArgb(224, 224, 230) },
+                Positions = new[] { 0f, 0.3f, 0.7f, 1f },
+            };
+            g.FillPath(b, path);
         }
-        // lid seam with a soft highlight under it
-        float seamY = body.Y + body.Height * 0.36f;
-        using (var seam = new Pen(Color.FromArgb(196, 196, 203), 1.4f * s))
-            g.DrawLine(seam, body.X + 2 * s, seamY, body.Right - 2 * s, seamY);
-        using (var light = new Pen(Color.FromArgb(180, 255, 255, 255), 1.2f * s))
-            g.DrawLine(light, body.X + 4 * s, seamY + 1.6f * s, body.Right - 4 * s, seamY + 1.6f * s);
+        // side shading for volume
+        using (var side = new LinearGradientBrush(body, Color.FromArgb(28, 0, 0, 0), Color.FromArgb(0, 0, 0, 0), LinearGradientMode.Horizontal))
+        {
+            side.InterpolationColors = new ColorBlend
+            {
+                Colors = new[] { Color.FromArgb(26, 0, 0, 0), Color.FromArgb(0, 0, 0, 0), Color.FromArgb(0, 0, 0, 0), Color.FromArgb(26, 0, 0, 0) },
+                Positions = new[] { 0f, 0.18f, 0.82f, 1f },
+            };
+            g.FillPath(side, path);
+        }
+        using (var edge = new Pen(Color.FromArgb(210, 210, 216), 1f * s))
+            g.DrawPath(edge, path);
+
+        // lid seam with a highlight under it
+        float seamY = body.Y + body.Height * 0.3f;
+        using (var seam = new Pen(Color.FromArgb(200, 200, 207), 1.3f * s))
+            g.DrawLine(seam, body.X + 1.5f * s, seamY, body.Right - 1.5f * s, seamY);
+        using (var light = new Pen(Color.White, 1.4f * s))
+            g.DrawLine(light, body.X + 3 * s, seamY + 1.5f * s, body.Right - 3 * s, seamY + 1.5f * s);
+
         // status light
-        using var led = new SolidBrush(charging ? Theme.Green : Color.FromArgb(150, 150, 156));
-        g.FillEllipse(led, cx - 2.5f * s, seamY + 11 * s, 5 * s, 5 * s);
+        var led = new RectangleF(cx - 3 * s, body.Y + body.Height * 0.55f, 6 * s, 6 * s);
+        using (var glow = new SolidBrush(Color.FromArgb(charging ? 60 : 0, Theme.Green)))
+            g.FillEllipse(glow, RectangleF.Inflate(led, 3 * s, 3 * s));
+        using (var dot = new SolidBrush(charging ? Theme.Green : Color.FromArgb(160, 160, 166)))
+            g.FillEllipse(dot, led);
     }
 
     private static void DrawHeadphones(Graphics g, float cx, float cy, float s)

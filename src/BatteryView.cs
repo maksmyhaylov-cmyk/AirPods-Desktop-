@@ -5,8 +5,9 @@ namespace AirPodsWin;
 public enum BatteryGlyph { LeftPod, RightPod, Case, Headphones }
 
 /// <summary>
-/// iPhone battery-widget style gauge: a thin ring with the device drawn inside,
-/// the percentage below and a caption under it.
+/// Gauge in the style of the iOS "Batteries" widget: a thick ring, a monochrome device glyph
+/// inside, a bolt that cuts the top of the ring while charging, the percentage below.
+/// The glyphs are drawn here (Apple's SF Symbols may not be shipped outside Apple platforms).
 /// </summary>
 public sealed class BatteryView : Control
 {
@@ -42,27 +43,27 @@ public sealed class BatteryView : Control
         var g = e.Graphics;
         g.Clear(Theme.Card);
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
         float s = S;
-        float d = 62 * s, stroke = 5.5f * s;
-        var ring = new RectangleF((Width - d) / 2f, 4 * s, d, d);
+        float stroke = 7 * s, d = 60 * s;
+        var ring = new RectangleF((Width - d) / 2f, 6 * s, d, d);
 
         using (var track = new Pen(Theme.Track, stroke))
             g.DrawEllipse(track, ring);
-
         if (_level is int lvl)
         {
             Color c = _charging || lvl > 20 ? Theme.Green : Theme.Red;
             using var pen = new Pen(c, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
             g.DrawArc(pen, ring, -90, Math.Max(1f, 360f * lvl / 100f));
         }
+        if (_charging) DrawBolt(g, ring, stroke, s);
 
-        DrawGlyph(g, ring, s, _level is null ? Theme.SubText : Theme.Text);
+        var inner = RectangleF.Inflate(ring, -stroke * 1.4f, -stroke * 1.4f);
+        DrawGlyph(g, inner, _level is null ? Theme.SubText : Color.FromArgb(28, 28, 30));
 
-        if (_charging) DrawBolt(g, ring, s);
-
-        float y = ring.Bottom + 8 * s;
+        float y = ring.Bottom + 9 * s;
         using (var font = Theme.SemiboldFont(17, s, display: true))
         using (var brush = new SolidBrush(_level is null ? Theme.SubText : Theme.Text))
         {
@@ -70,12 +71,12 @@ public sealed class BatteryView : Control
             g.DrawString(_level is int v ? $"{v}%" : "—", font, brush, new RectangleF(0, y, Width, 24 * s), sf);
         }
 
-        y += 24 * s;
-        using (var font = Theme.Font(12.5f, s))
+        y += 23 * s;
+        using (var font = Theme.Font(12, s))
         using (var brush = new SolidBrush(Theme.SubText))
         {
             var size = g.MeasureString(Caption, font);
-            float dot = _active ? 6 * s : 0, gap = _active ? 5 * s : 0;
+            float dot = _active ? 6 * s : 0, gap = _active ? 4 * s : 0;
             float x = (Width - size.Width - dot - gap) / 2f;
             if (_active)
             {
@@ -86,61 +87,65 @@ public sealed class BatteryView : Control
         }
     }
 
-    private void DrawGlyph(Graphics g, RectangleF ring, float s, Color color)
+    /// <summary>Monochrome glyphs fitted into <paramref name="box"/> (the inside of the ring).</summary>
+    private void DrawGlyph(Graphics g, RectangleF box, Color color)
     {
-        float cx = ring.X + ring.Width / 2f, cy = ring.Y + ring.Height / 2f;
-        using var brush = new SolidBrush(color);
-        using var pen = new Pen(color, 1.6f * s);
+        float u = box.Width / 32f; // glyphs are designed on a 32x32 grid
+        var state = g.Save();
+        g.TranslateTransform(box.X, box.Y);
+        g.ScaleTransform(u, u);
+        using var fill = new SolidBrush(color);
+        using var tipBrush = new SolidBrush(Color.FromArgb(142, 142, 147));
         switch (Glyph)
         {
             case BatteryGlyph.LeftPod:
             case BatteryGlyph.RightPod:
-            {
-                // AirPods Pro bud: rounded head with a short stem pointing down and inwards.
-                float dir = Glyph == BatteryGlyph.LeftPod ? 1 : -1;
-                var state = g.Save();
-                g.TranslateTransform(cx, cy);
-                g.RotateTransform(-12 * dir);
-                using (var head = Theme.RoundedRect(new RectangleF(-8 * s, -13 * s, 16 * s, 15 * s), 7 * s))
-                    g.FillPath(brush, head);
-                using (var stem = Theme.RoundedRect(new RectangleF(dir > 0 ? 1 * s : -6 * s, -2 * s, 5 * s, 16 * s), 2.5f * s))
-                    g.FillPath(brush, stem);
-                g.Restore(state);
+                // AirPods Pro bud seen from the front: round head, ear tip to the inside, straight stem.
+                if (Glyph == BatteryGlyph.RightPod) { g.TranslateTransform(32, 0); g.ScaleTransform(-1, 1); }
+                g.FillEllipse(fill, 7.5f, 4.5f, 13, 13);
+                using (var stem = Theme.RoundedRect(new RectangleF(8.6f, 12, 4.4f, 16.5f), 2.2f))
+                    g.FillPath(fill, stem);
+                g.FillEllipse(tipBrush, 16.5f, 9.5f, 9, 9);
+                using (var hole = new SolidBrush(Theme.Card))
+                    g.FillEllipse(hole, 19.6f, 12.6f, 2.8f, 2.8f);
                 break;
-            }
+
             case BatteryGlyph.Case:
             {
-                var body = new RectangleF(cx - 14 * s, cy - 10 * s, 28 * s, 21 * s);
-                using (var path = Theme.RoundedRect(body, 6 * s))
-                    g.DrawPath(pen, path);
-                g.DrawLine(pen, body.X + 1 * s, body.Y + 7 * s, body.Right - 1 * s, body.Y + 7 * s);
-                g.FillEllipse(brush, cx - 1.5f * s, body.Y + 12 * s, 3 * s, 3 * s);
+                // Charging case: filled rounded body, lid seam and status light cut out.
+                using (var body = Theme.RoundedRect(new RectangleF(3, 7.5f, 26, 19), 6.5f))
+                    g.FillPath(fill, body);
+                using (var cut = new Pen(Theme.Card, 1.3f))
+                    g.DrawLine(cut, 3, 13.5f, 29, 13.5f);
+                using (var cutBrush = new SolidBrush(Theme.Card))
+                    g.FillEllipse(cutBrush, 15, 17.5f, 2.2f, 2.2f);
                 break;
             }
+
             case BatteryGlyph.Headphones:
             {
-                g.DrawArc(pen, cx - 11 * s, cy - 12 * s, 22 * s, 22 * s, 180, 180);
-                using (var l = Theme.RoundedRect(new RectangleF(cx - 13 * s, cy - 2 * s, 7 * s, 12 * s), 3 * s)) g.FillPath(brush, l);
-                using (var r = Theme.RoundedRect(new RectangleF(cx + 6 * s, cy - 2 * s, 7 * s, 12 * s), 3 * s)) g.FillPath(brush, r);
+                using var band = new Pen(color, 2.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                g.DrawArc(band, 6, 5, 20, 20, 180, 180);
+                using (var l = Theme.RoundedRect(new RectangleF(3.5f, 14, 7, 12), 3)) g.FillPath(fill, l);
+                using (var r = Theme.RoundedRect(new RectangleF(21.5f, 14, 7, 12), 3)) g.FillPath(fill, r);
                 break;
             }
         }
+        g.Restore(state);
     }
 
-    /// <summary>Small green bolt badge on the top-right of the ring, like the iOS widget.</summary>
-    private static void DrawBolt(Graphics g, RectangleF ring, float s)
+    /// <summary>Green bolt sitting on the top of the ring, with a gap cut into the ring like iOS.</summary>
+    private static void DrawBolt(Graphics g, RectangleF ring, float stroke, float s)
     {
-        float r = 10 * s;
-        float bx = ring.Right - r * 1.2f, by = ring.Y - r * 0.2f;
-        using (var bg = new SolidBrush(Theme.Card)) g.FillEllipse(bg, bx - 2 * s, by - 2 * s, 2 * r + 4 * s, 2 * r + 4 * s);
-        using (var green = new SolidBrush(Theme.Green)) g.FillEllipse(green, bx, by, 2 * r, 2 * r);
-        float cx = bx + r, cy = by + r;
+        float cx = ring.X + ring.Width / 2, cy = ring.Y;
+        using (var gap = new SolidBrush(Theme.Card))
+            g.FillRectangle(gap, cx - 6.5f * s, cy - stroke, 13 * s, stroke * 2);
         PointF[] bolt =
         {
-            new(cx + 1.5f * s, cy - 6 * s), new(cx - 4 * s, cy + 1 * s), new(cx - 0.3f * s, cy + 1 * s),
-            new(cx - 1.5f * s, cy + 6 * s), new(cx + 4 * s, cy - 1 * s), new(cx + 0.3f * s, cy - 1 * s),
+            new(cx + 2.4f * s, cy - 8.5f * s), new(cx - 4.8f * s, cy + 1.2f * s), new(cx - 0.4f * s, cy + 1.2f * s),
+            new(cx - 2.4f * s, cy + 8.5f * s), new(cx + 4.8f * s, cy - 1.2f * s), new(cx + 0.4f * s, cy - 1.2f * s),
         };
-        using var white = new SolidBrush(Color.White);
-        g.FillPolygon(white, bolt);
+        using var green = new SolidBrush(Theme.Green);
+        g.FillPolygon(green, bolt);
     }
 }
