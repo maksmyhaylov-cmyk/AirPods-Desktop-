@@ -24,6 +24,9 @@ public sealed class Settings
     public bool AvoidAirPodsMic { get; set; } = true;
     public bool LowBatteryNotify { get; set; } = true;
     public int LowBatteryLevel { get; set; } = 20;
+    /// <summary>Last widget position (screen coordinates); null = above the tray.</summary>
+    public int? WidgetLeft { get; set; }
+    public int? WidgetTop { get; set; }
 
     private static string Dir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AirPodsWin");

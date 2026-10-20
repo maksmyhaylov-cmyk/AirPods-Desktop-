@@ -1,8 +1,12 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 
 namespace AirPodsWin;
 
+/// <summary>
+/// Compact 16:9 widget (like the iPhone battery widget) plus the app controller:
+/// BLE state, ear detection, audio policy and the tray icon. Settings live in <see cref="SettingsForm"/>.
+/// </summary>
 public sealed class MainForm : Form
 {
     private readonly Settings _settings = Settings.Load();
@@ -10,16 +14,27 @@ public sealed class MainForm : Form
     private readonly NotifyIcon _tray = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 3000 };
 
-    private readonly Label _title = new();
-    private readonly Label _status = new();
-    private readonly BatteryView _left = new() { Caption = "Ліва" };
-    private readonly BatteryView _right = new() { Caption = "Права" };
-    private readonly BatteryView _case = new() { Caption = "Кейс" };
+    // Widget
+    private readonly Label _title = new() { AutoEllipsis = true };
+    private readonly Label _status = new() { AutoEllipsis = true };
+    private readonly IconButton _gear = new() { Glyph = "" };
+    private readonly IconButton _close = new() { Glyph = "" };
+    private readonly BatteryView _left = new() { Caption = "Ліва", Glyph = BatteryGlyph.LeftPod };
+    private readonly BatteryView _right = new() { Caption = "Права", Glyph = BatteryGlyph.RightPod };
+    private readonly BatteryView _case = new() { Caption = "Кейс", Glyph = BatteryGlyph.Case };
+
+    // Settings window
+    private readonly SettingsForm _settingsForm;
+    private readonly GroupCard _soundCard = new();
     private readonly Label _audioInfo = new();
+    private readonly GroupCard _autoCard = new();
+    private readonly Label _footer = new() { Tag = "small" };
 
     private bool _startHidden;
     private bool _exiting;
     private IntPtr _trayIconHandle;
+    private AirPodsState? _lastState;
+    private string? _hfpWarning;
 
     // Ear detection
     private int? _inEarCount;
@@ -38,18 +53,18 @@ public sealed class MainForm : Form
         _startHidden = startHidden;
 
         Text = "AirPodsWin";
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Theme.Back;
-        ForeColor = Theme.Text;
-        Font = new Font("Segoe UI", 9.5f);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(400, 640);
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        // All sizes are computed from DeviceDpi in Relayout(), so no WinForms auto-scaling.
+        AutoScaleMode = AutoScaleMode.None;
+        BackColor = Theme.Card;
         Icon = MakeIcon(null, false);
 
-        BuildUi();
+        BuildWidget();
+        _settingsForm = BuildSettings();
         BuildTray();
+        Relayout();
 
         _scanner.MinRssi = _settings.MinRssi;
         _scanner.StateChanged += s => BeginInvokeSafe(() => OnAirPodsState(s));
@@ -57,6 +72,16 @@ public sealed class MainForm : Form
 
         _timer.Tick += (_, _) => OnTick();
         _earTimer.Tick += (_, _) => ConfirmPendingInEar();
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            cp.ClassStyle |= 0x20000; // CS_DROPSHADOW: borderless windows get no shadow otherwise
+            return cp;
+        }
     }
 
     protected override void SetVisibleCore(bool value)
@@ -75,6 +100,10 @@ public sealed class MainForm : Form
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
+        // DeviceDpi is only final once the handle exists.
+        ApplyFonts();
+        Relayout();
+        PlaceWidget();
         OnLoadOnce();
     }
 
@@ -87,116 +116,163 @@ public sealed class MainForm : Form
         OnTick();
     }
 
-    // ---------------------------------------------------------------- UI
-
-    private void BuildUi()
+    protected override void OnHandleCreated(EventArgs e)
     {
-        var root = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            Padding = new Padding(16),
-            AutoScroll = true,
-        };
-        Controls.Add(root);
+        base.OnHandleCreated(e);
+        Theme.RoundCorners(Handle);
+    }
 
+    // ------------------------------------------------------------ Widget
+
+    private float S => DeviceDpi / 96f;
+
+    private void BuildWidget()
+    {
         _title.Text = "Шукаю AirPods…";
-        _title.Font = new Font("Segoe UI Semibold", 15f);
-        _title.AutoSize = true;
-        root.Controls.Add(_title);
-
-        _status.Text = "Відкрийте кейс біля комп'ютера або вставте навушники у вуха.";
+        _status.Text = "Відкрийте кейс поруч із комп'ютером";
+        foreach (var l in new[] { _title, _status }) { l.AutoSize = false; l.BackColor = Theme.Card; }
+        _title.ForeColor = Theme.Text;
         _status.ForeColor = Theme.SubText;
-        _status.MaximumSize = new Size(360, 0);
-        _status.AutoSize = true;
-        _status.Margin = new Padding(3, 2, 3, 10);
-        root.Controls.Add(_status);
+        Controls.AddRange(new Control[] { _title, _status, _gear, _close, _left, _right, _case });
 
-        var batteries = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 8) };
-        batteries.Controls.AddRange(new Control[] { _left, _right, _case });
-        root.Controls.Add(batteries);
+        _gear.Click += (_, _) => ShowSettings();
+        _close.Click += (_, _) => HideWidget();
 
-        root.Controls.Add(Header("Звук"));
-        _audioInfo.ForeColor = Theme.SubText;
-        _audioInfo.MaximumSize = new Size(360, 0);
-        _audioInfo.AutoSize = true;
-        root.Controls.Add(_audioInfo);
-
-        root.Controls.Add(Check("Завжди стерео (не перемикатися на Hands-Free)",
-            _settings.ForceStereoOutput, v => { _settings.ForceStereoOutput = v; ApplyAudioPolicy(true); }));
-        root.Controls.Add(Check("Не використовувати мікрофон AirPods",
-            _settings.AvoidAirPodsMic, v => { _settings.AvoidAirPodsMic = v; ApplyAudioPolicy(true); }));
-
-        var btnRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, MaximumSize = new Size(370, 0) };
-        btnRow.Controls.Add(Button("Вимкнути Hands-Free", () => RunBluetooth("hfp-off",
-            "Hands-Free вимкнено. Тепер AirPods завжди грають у стерео-якості (мікрофон AirPods не працюватиме).")));
-        btnRow.Controls.Add(Button("Увімкнути Hands-Free", () => RunBluetooth("hfp-on",
-            "Hands-Free увімкнено. Мікрофон AirPods знову доступний.")));
-        btnRow.Controls.Add(Button("Підключити", ConnectAirPods));
-        root.Controls.Add(btnRow);
-
-        root.Controls.Add(Header("Автоматика"));
-        root.Controls.Add(Check("Пауза, коли виймаю навушник з вуха",
-            _settings.AutoPause, v => _settings.AutoPause = v));
-        root.Controls.Add(Check("Продовжувати відтворення, коли вставляю назад",
-            _settings.AutoResume, v => _settings.AutoResume = v));
-        root.Controls.Add(Check($"Сповіщення про низький заряд (<{_settings.LowBatteryLevel}%)",
-            _settings.LowBatteryNotify, v => _settings.LowBatteryNotify = v));
-        root.Controls.Add(Check("Запускати разом з Windows",
-            SafeGet(() => Settings.StartWithWindows), v => Settings.StartWithWindows = v));
+        // The whole widget is a drag handle (it has no title bar).
+        foreach (Control c in new Control[] { this, _title, _status, _left, _right, _case })
+            c.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) BeginDrag(); };
+        ApplyFonts();
     }
 
-    private static Label Header(string text) => new()
+    private void ApplyFonts()
     {
-        Text = text,
-        Font = new Font("Segoe UI Semibold", 11f),
-        AutoSize = true,
-        Margin = new Padding(3, 12, 3, 4),
-    };
-
-    private CheckBox Check(string text, bool value, Action<bool> onChange)
-    {
-        var cb = new CheckBox
-        {
-            Text = text,
-            Checked = value,
-            AutoSize = true,
-            MaximumSize = new Size(360, 0),
-            ForeColor = Theme.Text,
-            Margin = new Padding(3, 4, 3, 4),
-        };
-        cb.CheckedChanged += (_, _) =>
-        {
-            try { onChange(cb.Checked); }
-            catch (Exception ex) { MessageBox.Show(this, ex.Message, "AirPodsWin"); }
-            _settings.Save();
-        };
-        return cb;
+        float s = S;
+        _title.Font = Theme.SemiboldFont(19, s, display: true);
+        _status.Font = Theme.Font(13, s);
     }
 
-    private static Button Button(string text, Action onClick)
+    /// <summary>16:9 card: title and status on top, three gauges below.</summary>
+    private void Relayout()
     {
-        var b = new Button
-        {
-            Text = text,
-            AutoSize = true,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Theme.Panel,
-            ForeColor = Theme.Text,
-            Padding = new Padding(6, 3, 6, 3),
-            Margin = new Padding(3, 6, 6, 3),
-            Cursor = Cursors.Hand,
-        };
-        b.FlatAppearance.BorderColor = Theme.Button;
-        b.Click += (_, _) => onClick();
-        return b;
+        float s = S;
+        int w = (int)(360 * s), h = (int)(203 * s), pad = (int)(16 * s), btn = (int)(26 * s);
+        ClientSize = new Size(w, h);
+        _close.SetBounds(w - pad - btn, (int)(14 * s), btn, btn);
+        _gear.SetBounds(_close.Left - (int)(8 * s) - btn, _close.Top, btn, btn);
+        _title.SetBounds(pad, (int)(12 * s), _gear.Left - pad - (int)(6 * s), (int)(28 * s));
+        _status.SetBounds(pad, (int)(40 * s), w - pad * 2, (int)(20 * s));
+
+        var gauge = BatteryView.PreferredFor(s);
+        var gauges = new[] { _left, _right, _case }.Where(g => g.Visible).ToArray();
+        int slot = (w - pad) / Math.Max(1, gauges.Length);
+        int top = h - gauge.Height - (int)(8 * s);
+        for (int i = 0; i < gauges.Length; i++)
+            gauges[i].SetBounds(pad / 2 + i * slot + (slot - gauge.Width) / 2, top, gauge.Width, gauge.Height);
     }
+
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        ApplyFonts();
+        Relayout();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        // Hairline border so the white card stands out on light wallpapers (and on Windows 10).
+        using var pen = new Pen(Color.FromArgb(28, 0, 0, 0));
+        e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+    }
+
+    /// <summary>Saved position, or bottom-right above the tray like a flyout.</summary>
+    private void PlaceWidget()
+    {
+        var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+        if (_settings.WidgetLeft is int x && _settings.WidgetTop is int y
+            && Screen.AllScreens.Any(sc => sc.WorkingArea.Contains(new Rectangle(x, y, Width, Height))))
+        {
+            Location = new Point(x, y);
+            return;
+        }
+        int m = (int)(12 * S);
+        Location = new Point(area.Right - Width - m, area.Bottom - Height - m);
+    }
+
+    private void BeginDrag()
+    {
+        ReleaseCapture();
+        SendMessage(Handle, 0xA1 /* WM_NCLBUTTONDOWN */, (IntPtr)2 /* HTCAPTION */, IntPtr.Zero);
+        _settings.WidgetLeft = Left;
+        _settings.WidgetTop = Top;
+        _settings.Save();
+    }
+
+    private void ShowWidget()
+    {
+        if (!Visible) PlaceWidget();
+        Show();
+        Activate();
+    }
+
+    private void HideWidget() => Hide();
+
+    // ---------------------------------------------------------- Settings
+
+    private SettingsForm BuildSettings()
+    {
+        _soundCard.AddToggle("Завжди стерео", "Не перемикатися на Hands-Free",
+            _settings.ForceStereoOutput, v => { _settings.ForceStereoOutput = v; SaveAnd(() => ApplyAudioPolicy(true)); });
+        _soundCard.AddToggle("Без мікрофона AirPods", "Звук не стає моно під час дзвінків",
+            _settings.AvoidAirPodsMic, v => { _settings.AvoidAirPodsMic = v; SaveAnd(() => ApplyAudioPolicy(true)); });
+        _soundCard.AddAction("Вимкнути Hands-Free", () => RunBluetooth("hfp-off",
+            "Hands-Free вимкнено. Тепер AirPods завжди грають у стерео-якості (мікрофон AirPods не працюватиме)."));
+        _soundCard.AddAction("Увімкнути Hands-Free", () => RunBluetooth("hfp-on",
+            "Hands-Free увімкнено. Мікрофон AirPods знову доступний."));
+        _soundCard.AddAction("Підключити AirPods", ConnectAirPods);
+
+        _autoCard.AddToggle("Автопауза", "Коли виймаю навушник з вуха",
+            _settings.AutoPause, v => { _settings.AutoPause = v; SaveAnd(null); });
+        _autoCard.AddToggle("Автопродовження", "Коли вставляю навушник назад",
+            _settings.AutoResume, v => { _settings.AutoResume = v; SaveAnd(null); });
+        _autoCard.AddToggle("Низький заряд", $"Сповіщення, коли менше {_settings.LowBatteryLevel}%",
+            _settings.LowBatteryNotify, v => { _settings.LowBatteryNotify = v; SaveAnd(null); });
+        _autoCard.AddToggle("Запуск з Windows", "Працювати у треї після входу",
+            SafeGet(() => Settings.StartWithWindows), v => SaveAnd(() => Settings.StartWithWindows = v));
+
+        _footer.Text = $"AirPodsWin {Application.ProductVersion.Split('+')[0]}";
+        _footer.TextAlign = ContentAlignment.TopCenter;
+
+        return new SettingsForm(Icon!,
+            new(new Label { Text = "ЗВУК" }, 6, true),
+            new(_soundCard, 6),
+            new(_audioInfo, 26, true),
+            new(new Label { Text = "АВТОМАТИКА" }, 6, true),
+            new(_autoCard, 18),
+            new(_footer, 16));
+    }
+
+    private void SaveAnd(Action? action)
+    {
+        try { action?.Invoke(); }
+        catch (Exception ex) { MessageBox.Show(_settingsForm, ex.Message, "AirPodsWin"); }
+        _settings.Save();
+    }
+
+    private void ShowSettings()
+    {
+        _settingsForm.Show();
+        if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
+        _settingsForm.Activate();
+    }
+
+    // -------------------------------------------------------------- Tray
 
     private void BuildTray()
     {
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Відкрити", null, (_, _) => ShowWindow());
+        menu.Items.Add("Показати віджет", null, (_, _) => ShowWidget());
+        menu.Items.Add("Налаштування", null, (_, _) => ShowSettings());
         menu.Items.Add("Підключити AirPods", null, (_, _) => ConnectAirPods());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Вихід", null, (_, _) => ExitApp());
@@ -205,19 +281,18 @@ public sealed class MainForm : Form
         _tray.Text = "AirPodsWin — пошук AirPods";
         _tray.Icon = Icon;
         _tray.Visible = true;
-        _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowWindow(); };
-    }
-
-    private void ShowWindow()
-    {
-        Show();
-        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
-        Activate();
+        _tray.MouseClick += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (Visible) HideWidget(); else ShowWidget();
+        };
     }
 
     private void ExitApp()
     {
         _exiting = true;
+        _settingsForm.AllowClose = true;
+        _settingsForm.Close();
         Close();
     }
 
@@ -227,7 +302,7 @@ public sealed class MainForm : Form
         {
             // Keep running in the tray so battery and auto-pause keep working.
             e.Cancel = true;
-            Hide();
+            HideWidget();
             return;
         }
         _settings.Save();
@@ -238,14 +313,21 @@ public sealed class MainForm : Form
         base.OnFormClosing(e);
     }
 
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
+
     // ---------------------------------------------------------- AirPods
 
     private void OnAirPodsState(AirPodsState? s)
     {
+        _lastState = s;
+        UpdateStatus();
         if (s == null)
         {
             _title.Text = "Шукаю AirPods…";
-            _status.Text = "Сигнал втрачено. Відкрийте кейс біля комп'ютера або вставте навушники у вуха.";
             _left.SetState(null, false, false);
             _right.SetState(null, false, false);
             _case.SetState(null, false, false);
@@ -255,15 +337,18 @@ public sealed class MainForm : Form
         }
 
         _title.Text = s.Model;
-        _status.Text = DescribeEars(s) + $"   ·   сигнал {s.Rssi} dBm" + (s.Rssi < -90 && s.AnyInEar
-            ? "\n⚠ Дуже слабкий Bluetooth-сигнал: звук може заїкатися. Перевірте антену або використайте USB-адаптер."
-            : "");
         _left.SetState(s.LeftBattery, s.LeftCharging, s.LeftInEar);
         _right.SetState(s.RightBattery, s.RightCharging, s.RightInEar);
-        _case.SetState(s.CaseBattery, s.CaseCharging, s.LidOpen);
-        _case.Visible = !s.Model.StartsWith("AirPods Max", StringComparison.Ordinal);
-        _right.Visible = _case.Visible;
-        if (!_case.Visible) _left.Caption = "Заряд";
+        // The lid bit is meaningless while the pods are out of the case.
+        _case.SetState(s.CaseBattery, s.CaseCharging, s.LidOpen && !s.AnyInEar);
+        bool isMax = s.Model.StartsWith("AirPods Max", StringComparison.Ordinal);
+        if (_case.Visible == isMax)
+        {
+            _case.Visible = _right.Visible = !isMax;
+            _left.Caption = isMax ? "Заряд" : "Ліва";
+            _left.Glyph = isMax ? BatteryGlyph.Headphones : BatteryGlyph.LeftPod;
+            Relayout();
+        }
 
         string tip = $"{s.Model}\nЛ: {Pct(s.LeftBattery)}  П: {Pct(s.RightBattery)}  Кейс: {Pct(s.CaseBattery)}";
         _tray.Text = tip.Length > 63 ? tip[..63] : tip;
@@ -271,6 +356,16 @@ public sealed class MainForm : Form
 
         HandleEarDetection(s);
         HandleLowBattery(s);
+    }
+
+    /// <summary>One line under the title: a warning in orange if something hurts the sound, else the ear state.</summary>
+    private void UpdateStatus()
+    {
+        var s = _lastState;
+        string? warning = _hfpWarning
+            ?? (s is { AnyInEar: true, Rssi: < -90 } ? $"Слабкий сигнал Bluetooth ({s.Rssi} dBm) — звук може заїкатися" : null);
+        _status.Text = warning ?? (s == null ? "Відкрийте кейс поруч із комп'ютером" : DescribeEars(s));
+        _status.ForeColor = warning != null ? Theme.Orange : Theme.SubText;
     }
 
     private static string Pct(int? v) => v is int x ? x + "%" : "—";
@@ -420,6 +515,10 @@ public sealed class MainForm : Form
             if (pods.Count > 0 && podMics.Count == 0) text += "\n✓ Hands-Free вимкнено — завжди стерео";
             if (noOtherMic != null) text += "\n" + noOtherMic;
             _audioInfo.Text = text;
+            _audioInfo.ForeColor = text.Contains('⚠') ? Theme.Orange : Theme.SubText;
+            _hfpWarning = micUsers.Count > 0 ? $"Моно: мікрофон AirPods використовує {string.Join(", ", micUsers)}"
+                : current?.IsHandsFree == true ? "Режим Hands-Free — низька якість звуку" : null;
+            UpdateStatus();
         }
         catch (Exception ex)
         {
