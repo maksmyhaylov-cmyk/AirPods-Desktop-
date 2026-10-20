@@ -26,7 +26,7 @@ AirPodsWin:
 ## Як отримати exe
 
 **Готовий файл:** вкладка *Actions* → workflow **Build AirPodsWin** → останній запуск → артефакт `AirPodsWin`.
-Для релізу створіть тег `v1.0.0` — exe з'явиться на сторінці *Releases*.
+Кожен push у `main` публікує exe на сторінці *Releases* (Releases → Latest → `AirPodsWin.exe`).
 
 **Зібрати самому** (потрібен [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)):
 
