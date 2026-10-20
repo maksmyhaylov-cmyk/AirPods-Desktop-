@@ -26,6 +26,8 @@ public sealed class MainForm : Form
     private int? _pendingInEar;
     private DateTime _pendingSince;
     private bool _pausedByUs;
+    private const int EarDebounceMs = 500;
+    private readonly System.Windows.Forms.Timer _earTimer = new() { Interval = EarDebounceMs };
 
     // Audio
     private bool _stereoWasPresent;
@@ -54,6 +56,7 @@ public sealed class MainForm : Form
         _scanner.Error += msg => BeginInvokeSafe(() => _status.Text = msg);
 
         _timer.Tick += (_, _) => OnTick();
+        _earTimer.Tick += (_, _) => ConfirmPendingInEar();
     }
 
     protected override void SetVisibleCore(bool value)
@@ -291,18 +294,28 @@ public sealed class MainForm : Form
         if (count == _inEarCount)
         {
             _pendingInEar = null;
+            _earTimer.Stop();
             return;
         }
-        // Debounce: packets from the two pods can briefly disagree.
+        // Debounce: packets from the two pods can briefly disagree. AirPods send a packet only
+        // every ~1.3 s, so waiting for a second packet would add seconds: confirm by timer instead,
+        // unless a contradicting packet arrives within the window.
         if (_pendingInEar != count)
         {
             _pendingInEar = count;
             _pendingSince = DateTime.Now;
+            _earTimer.Stop();
+            _earTimer.Start();
             return;
         }
-        if (DateTime.Now - _pendingSince < TimeSpan.FromMilliseconds(800)) return;
+        ConfirmPendingInEar();
+    }
 
-        int previous = _inEarCount.Value;
+    private void ConfirmPendingInEar()
+    {
+        if (_pendingInEar is not int count || _inEarCount is not int previous) return;
+        if (DateTime.Now - _pendingSince < TimeSpan.FromMilliseconds(EarDebounceMs)) return;
+        _earTimer.Stop();
         _inEarCount = count;
         _pendingInEar = null;
         _ = OnInEarChangedAsync(previous, count);
